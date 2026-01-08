@@ -45,7 +45,7 @@ numberDict = {
 }
 
 app = FastAPI(title="Braille Recognition API")
-model = YOLO("models/best.pt")
+model = YOLO("best.pt")
 
 @app.get("/")
 async def root():
