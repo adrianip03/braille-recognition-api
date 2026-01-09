@@ -1,10 +1,35 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
-import io
 import uvicorn
 import numpy as np
-from scipy import stats
+from sklearn.cluster import DBSCAN, KMeans
+from sklearn.metrics import silhouette_score
+import sys
 from ultralytics import YOLO
+
+# db clustering to detect lines
+def detect_lines_dbscan(y_coords, eps_auto=True, safety_factor=5):
+    y_array = np.array(y_coords).reshape(-1, 1)
+    
+    if eps_auto:
+        from sklearn.neighbors import NearestNeighbors
+        
+        neighbors = NearestNeighbors(n_neighbors=2)
+        neighbors_fit = neighbors.fit(y_array)
+        distances, indices = neighbors_fit.kneighbors(y_array)
+        
+        distances = np.sort(distances[:, 1])
+        
+        # we want epsilon to be max nearest within cluster neighbor distance
+        # set to be 95% * safety factor to prevent extreme cases with single point cluster
+        eps = np.percentile(distances, 95) * safety_factor
+    else:
+        eps = 10  # approx char height
+    
+    dbscan = DBSCAN(eps=eps, min_samples=1)
+    labels = dbscan.fit_predict(y_array)
+    
+    return labels
 
 classNameToBraille = {
     'a': '⠁', 'b': '⠃', 'c': '⠉', 'd': '⠙', 'e': '⠑',
@@ -12,31 +37,29 @@ classNameToBraille = {
     'k': '⠅', 'l': '⠇', 'm': '⠍', 'n': '⠝', 'o': '⠕',
     'p': '⠏', 'q': '⠟', 'r': '⠗', 's': '⠎', 't': '⠞',
     'u': '⠥', 'v': '⠧', 'w': '⠺', 'x': '⠭', 'y': '⠽', 'z': '⠵',
-    
     'capital': '⠠',
-    
-    # this? 
     'number': '⠼',
+    'dot_4': '',
     
-    # Punctuation
-    '.': '⠲',    # period
-    ',': '⠂',    # comma
-    '?': '⠦',    # question mark
-    '!': '⠖',    # exclamation mark
-    ';': '⠆',    # semicolon
-    ':': '⠒',    # colon
-    "'": '⠄',    # apostrophe
-    '"': '⠐⠂',  # quotation mark
-    '-': '⠤',    # hyphen
-    '(': '⠶',    # opening parenthesis
-    ')': '⠶',    # closing parenthesis (same as opening in Braille)
-    '/': '⠌',    # slash
-    '[': '⠦',    # opening bracket (same as ? in some systems)
-    ']': '⠴',    # closing bracket
-    '{': '⠠⠦',  # opening brace
-    '}': '⠠⠴',  # closing brace
-    '<': '⠪',    # less than
-    '>': '⠕',    # greater than (same as o in some systems)
+    # # Punctuation
+    # '.': '⠲',    # period
+    # ',': '⠂',    # comma
+    # '?': '⠦',    # question mark
+    # '!': '⠖',    # exclamation mark
+    # ';': '⠆',    # semicolon
+    # ':': '⠒',    # colon
+    # "'": '⠄',    # apostrophe
+    # '"': '⠐⠂',  # quotation mark
+    # '-': '⠤',    # hyphen
+    # '(': '⠶',    # opening parenthesis
+    # ')': '⠶',    # closing parenthesis (same as opening in Braille)
+    # '/': '⠌',    # slash
+    # '[': '⠦',    # opening bracket (same as ? in some systems)
+    # ']': '⠴',    # closing bracket
+    # '{': '⠠⠦',  # opening brace
+    # '}': '⠠⠴',  # closing brace
+    # '<': '⠪',    # less than
+    # '>': '⠕',    # greater than (same as o in some systems)
 }
 
 numberDict = {
@@ -45,7 +68,12 @@ numberDict = {
 }
 
 app = FastAPI(title="Braille Recognition API")
-model = YOLO("best.pt")
+
+try:
+    model = YOLO("currentModel.pt")
+except Exception as e:
+    print(f"Error loading model: {e}")
+    model = None
 
 @app.get("/")
 async def root():
@@ -56,77 +84,150 @@ async def predict(file: UploadFile = File(...)):
     if not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
     
-    contents = await file.read()
+    if model is None: 
+        raise HTTPException(status_code=500, detail="Model not loaded")
     
-    results = model(contents)
-    
-    # process results        
-    cord = []
-    for i in results[0].summary():
-        XY = i['box']
-        X = (XY['x1'], XY['x2'])
-        Y = (XY['y1'], XY['y2'])
-        midpoint = (np.mean(X), np.mean(Y))
-        cord.append((i['name'],midpoint))
-
-    if not cord:
-        return JSONResponse({
-            "braille": "",
-            "text": "",
-            "message": "No braille characters detected",
-            "confidence": 0
-        })
+    try: 
+        contents = await file.read()
+        
+        import PIL.Image
+        import io as image_io
+        
+        image = PIL.Image.open(image_io.BytesIO(contents))
+        
+        results = model(image)
+        
+        # process results        
+        cords = []
+        confidences = []
+        
+        results[0].show()
+        
+        temp = [(item["name"], item["box"]["y1"], item["box"]["x1"]) for item in results[0].summary()]
+        temp = sorted(temp, key=lambda x: x[1])
+        for item in temp:
+            print(item)
             
-    xy_sorted_cord = sorted(cord, key=lambda x: (x[1][1], x[1][0]))
-    
-    horizontal_distance_from_front = []
-    for i in range(1, len(cord)): 
-        horizontal_distance_from_front.append(np.mean(Y)-xy_sorted_cord[i-1][1][1])
+        print()
         
-    if any(dist < 0 for dist in horizontal_distance_from_front):
-        same_line_horizontal_dist = [dist for dist in horizontal_distance_from_front if dist > 0]
-    else: 
-        same_line_horizontal_dist = horizontal_distance_from_front
-        
-    # check if same line horizontal dist is bimodal
-    # hartigan's diptest
-    dip_statistic, p_value = stats.diptest.diptest(np.array(same_line_horizontal_dist))
-    if p_value < 0.05: 
-        from sklearn.cluster import KMeans
-        X = np.array(same_line_horizontal_dist).reshape(-1, 1)
-        kmeans = KMeans(n_clusters=2, random_state=0, n_init=10).fit(X)
-        space_threshold = np.mean(kmeans.cluster_centers_)
-        space_postions = [i for i, dist in enumerate(horizontal_distance_from_front) if (dist > space_threshold or dist < 0)]
-    else: 
-        space_postions = [i for i, dist in enumerate(horizontal_distance_from_front) if dist < 0]
-    
-    processed_braille = ""
-    processed_text = ""
-    capitalFlag = False
-    numberFlag = False
-    for idx, cord in enumerate(xy_sorted_cord): 
-        if idx in space_postions: 
-            processed_braille += " "
-            processed_text += " "
-        processed_braille += classNameToBraille[cord[0]]
-        if cord[0] == "capital": 
-            capitalFlag = True
-        elif cord[0] == "number": 
-            numberFlag = True
-        else: 
-            if capitalFlag: 
-                processed_text += cord[0].upper()
-                capitalFlag = False
-            elif numberFlag: 
-                processed_text += numberDict[cord[0]]
-            else: 
-                processed_text += cord[0]
-    
+        if results[0].boxes is not None and len(results[0].boxes) > 0: 
+            boxes = results[0].boxes
+            for box in boxes: 
+                cls_idx = int(box.cls[0])
+                class_name = model.names[cls_idx]
+                conf = float(box.conf[0])
+                
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                midpoint = ((x1+x2)/2, (y1+y2)/2)
+                
+                cords.append((class_name, midpoint))
+                confidences.append(conf)
+                
 
-    return JSONResponse({
-        "braille": processed_braille,
-        "text": processed_text,
-    })
+        if not cords:
+            return JSONResponse({
+                "braille": "",
+                "text": "",
+                "message": "No braille characters detected",
+                "confidence": 0
+            })
+                
+        # group together similar y as same line
+        y_cords = [x[1][1] for x in cords]
+        line_labels = detect_lines_dbscan(y_cords)
+    
+        line_groups = {}
+        for i, label in enumerate(line_labels):
+            if label not in line_groups:
+                line_groups[label] = []
+            line_groups[label].append(cords[i])
+            
+        sorted_lines = []
+        for label in sorted(line_groups.keys(),  key=lambda l: np.mean([c[1][1] for c in line_groups[l]])):
+            line_chars = sorted(line_groups[label], key=lambda x: x[1][0])
+            sorted_lines.append(line_chars)
+            
+        
+        for line in sorted_lines:
+            for char in line:
+                print(f"{char[0]}", end=" ")
+            print()
+            
+        print()
+        
+        horizontal_distance_from_front = []
+        for line in sorted_lines: 
+            x_dist_within_line = [-1]
+            for i in range(1, len(line)): 
+                x_dist_within_line.append(line[i][1][0] - line[i-1][1][0])
+            horizontal_distance_from_front.append(x_dist_within_line)
+        
+        for line in horizontal_distance_from_front:
+            for char in line:
+                print(f"{char:.2f}", end=" ")
+            print()
+            
+        same_line_horizontal_dist = [dist for sublist in horizontal_distance_from_front for dist in sublist if dist > 0]
+        
+
+        # try clustering to two clusters
+        if len(same_line_horizontal_dist) >= 2: 
+            X = np.array(same_line_horizontal_dist).reshape(-1, 1)
+            kmeans = KMeans(n_clusters=2, random_state=0, n_init=10).fit(X)
+            labels = kmeans.fit_predict(X)
+            centers = sorted(kmeans.cluster_centers_.flatten())
+            
+            # silhouette check: 
+            score = silhouette_score(X, labels)
+            
+            if score > 0.5: 
+                space_threshold = np.mean(centers)
+            else: 
+                space_threshold = sys.maxsize            
+        else: 
+            space_threshold = sys.maxsize
+            
+        print(space_threshold)
+        
+        processed_braille = ""
+        processed_text = ""
+        capitalFlag = False
+        numberFlag = False
+        for i, line in enumerate(sorted_lines): 
+            for j, char in enumerate(line): 
+                if (horizontal_distance_from_front[i][j] == -1 and i != 0):
+                    # newline? 
+                    processed_braille += " "
+                    processed_text += " "
+                elif (horizontal_distance_from_front[i][j] > space_threshold):
+                    processed_braille += " "
+                    processed_text += " "
+                    
+                processed_braille += classNameToBraille[char[0]]
+                if char[0] == "capital": 
+                    capitalFlag = True
+                elif char[0] == "number": 
+                    numberFlag = True
+                else: 
+                    if capitalFlag: 
+                        processed_text += char[0].upper()
+                        capitalFlag = False
+                    elif numberFlag: 
+                        processed_text += numberDict[char[0]]
+                        numberFlag = False
+                    else: 
+                        processed_text += char[0]
+        
+        avg_confidence = np.mean(confidences) if confidences else 0
+        
+        return JSONResponse({
+            "braille": processed_braille,
+            "text": processed_text,
+            "confidence": avg_confidence
+        })
+        
+    except Exception as e: 
+        raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 # @app.post("/predict/visualize/")
 # async def predict_visualize(file: UploadFile = File(...)):
@@ -144,7 +245,7 @@ async def predict(file: UploadFile = File(...)):
 
 @app.get("/classes/")
 async def get_classes():
-    return {"classes": list(model.class_names.values())}
+    return {"classes": model.names}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
