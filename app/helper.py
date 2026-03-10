@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
+from PIL import ImageDraw
 
-WINDOW_PERCENTAGE = 0.4
-WINDOW_NUM = 3
+WINDOW_PERCENTAGE = 0.6
+WINDOW_NUM = 2
 
 def split_image(image):
     numpy_image_rgb = np.asarray(image)
@@ -96,6 +97,8 @@ def get_IOU(xyxy1, xyxy2, a1, a2):
     return float(ia) / (a1 + a2 - ia)
     
 # N^2 time cry should be optimizable
+# agnostic = False
+# merge diff bounding box to same 
 def non_max_suppression(boxes, iou_threshold):
     sorted_boxes = sorted(boxes, key= lambda x: x.conf, reverse=True)
     sorted_boxes_with_areas = [(box, get_area(box.xyxy[0].tolist())) for box in sorted_boxes]
@@ -103,14 +106,15 @@ def non_max_suppression(boxes, iou_threshold):
     keep = []
     while len(sorted_boxes_with_areas) > 0:
         highest_conf_box, highest_conf_box_area = sorted_boxes_with_areas.pop(0)
-        keep.append(highest_conf_box)
+        
         
         IOUs = [get_IOU(highest_conf_box.xyxy[0].tolist(), box.xyxy[0].tolist(), highest_conf_box_area, boxa) for (box, boxa) in sorted_boxes_with_areas]
     
         new_sorted_boxes_with_areas = []
-        for box_with_a, iou in zip(sorted_boxes_with_areas, IOUs):
+        for box_with_area, iou in zip(sorted_boxes_with_areas, IOUs):
             if iou < iou_threshold:
-                new_sorted_boxes_with_areas.append(box_with_a)
+                new_sorted_boxes_with_areas.append(box_with_area)
+        keep.append(highest_conf_box)
         sorted_boxes_with_areas = new_sorted_boxes_with_areas       
         
     return keep    
@@ -124,3 +128,40 @@ def get_normalized_bounding_box(boxes, images_size):
     
     img_width, img_height = images_size
     return [float(x1_min) / img_width, float(y1_min) / img_height, float(x2_max - x1_min) / img_width, float(y2_max - y1_min) / img_height]
+
+def visualize(image, boxes, names):
+
+    img_with_boxes = image.copy()
+    draw = ImageDraw.Draw(img_with_boxes)
+    import random
+    colors = dict()
+    for box in boxes: 
+        x1, y1, x2, y2 = box.xyxy[0].tolist()
+        class_name = names[int(box.cls[0])]
+        if class_name not in colors:
+            colors[class_name] = tuple(random.randint(50, 255) for _ in range(3))    
+        color = colors[class_name]
+        
+        for i in range(3):
+            draw.rectangle([x1-i, y1-i, x2+i, y2+i], outline=color, width=1)
+            
+        label = f"{class_name}"
+        if hasattr(box, 'conf') and box.conf is not None:
+            conf_value = float(box.conf[0]) if hasattr(box.conf, '__len__') else float(box.conf)
+            label += f" {conf_value:.2f}"
+        
+        bbox = draw.textbbox((0, 0), label)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+        
+        draw.rectangle(
+            [x1, y1 - text_height - 5, x1 + text_width + 10, y1],
+            fill=color
+        )
+        draw.text(
+            (x1 + 5, y1 - text_height - 3),
+            label,
+            fill=(0, 0, 0),
+        )
+
+    img_with_boxes.show()

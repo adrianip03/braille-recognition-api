@@ -9,10 +9,11 @@ from ultralytics import YOLO
 from PIL import Image, ExifTags
 import io as image_io
 import time
-from helper import split_image, get_merged_boxes, non_max_suppression, get_normalized_bounding_box
+from helper import split_image, get_merged_boxes, non_max_suppression, get_normalized_bounding_box, visualize
 import traceback 
 from pathlib import Path
 import os
+from spellchecker import SpellChecker
 
 # Helper function to fix image orientation based on EXIF data
 def fix_image_orientation(image: Image.Image) -> Image.Image:
@@ -152,7 +153,7 @@ async def predict(file: UploadFile = File(...)):
         
         # Model infernce
         inference_start = time.time()
-        results = model(image_list, imgsz=640, iou=0.25, conf=0.25, agnostic_nms = True)
+        results = model(image_list, imgsz=1024, iou=0.25, conf=0.25, agnostic_nms = False)
         # results = model(image, imgsz=1024, iou=0.25, conf=0.25)
         inference_time = time.time() - inference_start
         
@@ -164,6 +165,9 @@ async def predict(file: UploadFile = File(...)):
         postprocess_start = time.time()
         merged_boxes = get_merged_boxes(results, image.size)
         boxes = non_max_suppression(merged_boxes, 0.25)
+        # boxes = results[0].boxes
+        
+        visualize(image, boxes, model.names)
         postprocess_time = time.time() - postprocess_start
             
         if not boxes:
@@ -272,6 +276,13 @@ async def predict(file: UploadFile = File(...)):
                         numberFlag = False
                     else: 
                         processed_text += char[0]
+                        
+        # print(processed_text)
+        # spell = SpellChecker()
+        # words = processed_text.split()
+        # corrected_text = " ".join([spell.correction(word) or word for word in words])
+        # print(corrected_text)
+                        
         conversion_time = time.time() - conversion_start
         
         total_time = time.time() - start_time
