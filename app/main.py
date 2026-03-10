@@ -13,7 +13,8 @@ from helper import split_image, get_merged_boxes, non_max_suppression, get_norma
 import traceback 
 from pathlib import Path
 import os
-from spellchecker import SpellChecker
+from correction import find_matching_words, get_words
+# from spellchecker import SpellChecker
 
 # Helper function to fix image orientation based on EXIF data
 def fix_image_orientation(image: Image.Image) -> Image.Image:
@@ -153,7 +154,7 @@ async def predict(file: UploadFile = File(...)):
         
         # Model infernce
         inference_start = time.time()
-        results = model(image_list, imgsz=1024, iou=0.25, conf=0.25, agnostic_nms = False)
+        results = model(image_list, imgsz=1024, iou=0.25, conf=0.25, agnostic_nms = True)
         # results = model(image, imgsz=1024, iou=0.25, conf=0.25)
         inference_time = time.time() - inference_start
         
@@ -277,11 +278,12 @@ async def predict(file: UploadFile = File(...)):
                     else: 
                         processed_text += char[0]
                         
-        # print(processed_text)
-        # spell = SpellChecker()
-        # words = processed_text.split()
-        # corrected_text = " ".join([spell.correction(word) or word for word in words])
-        # print(corrected_text)
+        print(processed_text)
+        word_set = get_words()
+        words = processed_text.split()
+        corrected_words = [find_matching_words(word, word_set)[0] or word for word in words]
+        corrected_text = " ".join(corrected_words)
+        print(corrected_text)
                         
         conversion_time = time.time() - conversion_start
         
@@ -304,7 +306,7 @@ async def predict(file: UploadFile = File(...)):
         
         return JSONResponse({
             "braille": processed_braille,
-            "text": processed_text,
+            "text": corrected_text,
             "confidence": avg_confidence, 
             "boundingBox": normalized_bounding_box
         })
@@ -322,6 +324,7 @@ async def get_classes():
     model_path = None
     if((current_dir / "model").exists()):
         model_path = current_dir / "model" / "currentModel.pt"
+        # model_path = current_dir / "model" / "no_aug.pt"
     else:
         model_path = Path('/app/model/currentModel.pt')
     try:
