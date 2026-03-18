@@ -1,6 +1,7 @@
 import re
 import nltk
 from nltk.corpus import words
+from spellchecker import SpellChecker
 
 ################################################################################
 #  load enlisg words
@@ -38,6 +39,28 @@ def word_to_regex(word):
             regex_str += f"{char}"
     regex_str += "$"
     return regex_str
+
+################################################################################
+#  get all candidate words
+################################################################################
+def generate_candidates(word):
+    # input:
+    #    word - a string containing the word
+    # return:
+    #    candidates - a list of possible words
+    
+    word_lower = word.lower()
+    candidates = ["",]
+    
+    for char in word_lower:
+        if char in SYM_PAIRS:
+            fork = [string + SYM_PAIRS[char] for string in candidates]
+            candidates = [string + char for string in candidates]
+            candidates.extend(fork)
+        else: 
+            candidates = [string + char for string in candidates]
+            
+    return candidates
 
 
 ################################################################################
@@ -85,12 +108,35 @@ def find_matching_words(raw_word, word_set):
     # return:
     #    matches - a list of matching words
     
-    regex_str = word_to_regex(raw_word)
+    spell = SpellChecker()    
+    # regex_str = word_to_regex(raw_word)
+    raw_candidates = generate_candidates(raw_word)
     casing = get_casing(raw_word)
     matches = []
+    
+    word_len = len(raw_word)
+    corr_candidate_set = set()
+    for raw_candidate in raw_candidates:
+        corr_candidates = spell.candidates(raw_candidate)
+        corr_candidates = [candidate for candidate in corr_candidates if len(candidate) == word_len]
+        if corr_candidates is None: 
+            corr_candidates = [raw_candidate]
+        corr_candidate_set.update(corr_candidates)
+    
+
     for word in word_set:
-        if re.match(regex_str, word, re.IGNORECASE):
+        if word in corr_candidate_set:
             matches.append(word)
+        
+    # for word in word_set:
+    #     for raw_candidate in raw_candidates:
+    #         corr_candidate = spell.correction(raw_candidate)
+    #         # if corr_candidates is None: 
+    #         #     corr_candidates = [raw_candidate]
+    #         if word == corr_candidate:
+    #             matches.append(word)
+    #     # if re.match(regex_str, word, re.IGNORECASE):
+    #     #     matches.append(word)
     if len(matches) == 0:
         return [raw_word]
     case_preserved_matches = [case_restore(word, casing) for word in matches]
@@ -108,6 +154,6 @@ if __name__ == "__main__":
     print(f"Pattern '{pattern2}' → Most likely: {result2[0] if result2 else 'No match'}")
     
     print("\nAll matches for each pattern:")
-    for pattern in ["Line", "World"]:
+    for pattern in ["Helli", "World"]:
         matches = find_matching_words(pattern, words)
         print(f"{pattern}: {matches}")

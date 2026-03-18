@@ -14,7 +14,6 @@ import traceback
 from pathlib import Path
 import os
 from correction import find_matching_words, get_words
-# from spellchecker import SpellChecker
 
 # Helper function to fix image orientation based on EXIF data
 def fix_image_orientation(image: Image.Image) -> Image.Image:
