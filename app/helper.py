@@ -2,8 +2,11 @@ import cv2
 import numpy as np
 from PIL import ImageDraw
 
-WINDOW_PERCENTAGE = 0.6
-WINDOW_NUM = 2
+WINDOW_PERCENTAGE = 0.4
+WINDOW_NUM = 3
+
+STD_BOX_RATIO = 47 / 79
+BOX_RATIO_ERROR_BOUND = 0.2
 
 def split_image(image):
     numpy_image_rgb = np.asarray(image)
@@ -80,7 +83,14 @@ def get_merged_boxes(results, original_size):
     for idx, result in enumerate(results):
         offset = offset_list[idx]
         boxes = [Box(box.cls, box.conf, box.xyxy, offset) for box in result.boxes]
-        merged_boxes.extend(boxes)
+        for box in boxes: 
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            boxw = x2 - x1
+            boxh = y2 - y1
+            box_rat = float(boxw) / boxh
+            if box_rat <= STD_BOX_RATIO * (1+BOX_RATIO_ERROR_BOUND) and box_rat >= STD_BOX_RATIO * (1-BOX_RATIO_ERROR_BOUND):
+                merged_boxes.append(box)
+        # merged_boxes.extend(boxes)
     return merged_boxes
 
 def get_area(xyxy):
