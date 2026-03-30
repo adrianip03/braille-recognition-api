@@ -189,8 +189,8 @@ def inpaint_image(img, boxes):
         
     inpainted_image = cv2.inpaint(cv2_image,mask,5,cv2.INPAINT_TELEA)
     
-    inpainted_bgr = cv2.cvtColor(inpainted_image, cv2.COLOR_RGB2BGR)
-    success, buf = cv2.imencode(".png", inpainted_bgr)
+    # inpainted_bgr = cv2.cvtColor(inpainted_image, cv2.COLOR_RGB2BGR)
+    success, buf = cv2.imencode(".png", inpainted_image)
     if not success:
         raise RuntimeError("PNG encoding failed")
     b64_inpainted_png = base64.b64encode(buf.tobytes()).decode("utf-8")
