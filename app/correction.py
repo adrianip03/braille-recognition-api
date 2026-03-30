@@ -94,7 +94,7 @@ def case_restore(word, casing):
         if index in casing:
             formatted_word += char.upper()
         else: 
-            formatted_word += char
+            formatted_word += char.lower()
     return formatted_word
 
 
@@ -109,51 +109,51 @@ def find_matching_words(raw_word, word_set):
     #    matches - a list of matching words
     
     spell = SpellChecker()    
-    # regex_str = word_to_regex(raw_word)
+    regex_str = word_to_regex(raw_word)
     raw_candidates = generate_candidates(raw_word)
+    # print(raw_candidates)
     casing = get_casing(raw_word)
     matches = []
+    regex_matches = []
     
     word_len = len(raw_word)
-    corr_candidate_set = set()
+    corr_candidate_list = list()
     for raw_candidate in raw_candidates:
         corr_candidates = spell.candidates(raw_candidate)
         if corr_candidates is None: 
             corr_candidates = [raw_candidate]
-        corr_candidates = [candidate for candidate in corr_candidates if len(candidate) == word_len]
-        corr_candidate_set.update(corr_candidates)
+        for candidate in corr_candidates:
+            if len(candidate) == word_len and candidate not in corr_candidate_list:
+                corr_candidate_list.append(candidate)
     
 
     for word in word_set:
-        if word in corr_candidate_set:
+        if re.match(regex_str, word, re.IGNORECASE):
+            regex_matches.append(word)
+        if word in corr_candidate_list:
             matches.append(word)
         
-    # for word in word_set:
-    #     for raw_candidate in raw_candidates:
-    #         corr_candidate = spell.correction(raw_candidate)
-    #         # if corr_candidates is None: 
-    #         #     corr_candidates = [raw_candidate]
-    #         if word == corr_candidate:
-    #             matches.append(word)
-    #     # if re.match(regex_str, word, re.IGNORECASE):
-    #     #     matches.append(word)
     if len(matches) == 0:
         return [raw_word]
-    case_preserved_matches = [case_restore(word, casing) for word in matches]
+    
+    if len(regex_matches) != 0: 
+        case_preserved_matches = [case_restore(word, casing) for word in regex_matches]
+    else: 
+        case_preserved_matches = [case_restore(word, casing) for word in matches]
     return case_preserved_matches
 
 if __name__ == "__main__":
     words = get_words()
     
-    pattern1 = "Helli"
-    result1 = find_matching_words(pattern1, words)
-    print(f"Pattern '{pattern1}' → Most likely: {result1[0] if result1 else 'No match'}")
+    # pattern1 = "Helli"
+    # result1 = find_matching_words(pattern1, words)
+    # print(f"Pattern '{pattern1}' → Most likely: {result1[0] if result1 else 'No match'}")
     
-    pattern2 = "World"
-    result2 = find_matching_words(pattern2, words)
-    print(f"Pattern '{pattern2}' → Most likely: {result2[0] if result2 else 'No match'}")
+    # pattern2 = "World"
+    # result2 = find_matching_words(pattern2, words)
+    # print(f"Pattern '{pattern2}' → Most likely: {result2[0] if result2 else 'No match'}")
     
     print("\nAll matches for each pattern:")
-    for pattern in ["Helli", "World"]:
+    for pattern in "Hillo Rorld This is a ner leni".split():
         matches = find_matching_words(pattern, words)
         print(f"{pattern}: {matches}")
