@@ -9,7 +9,7 @@ from ultralytics import YOLO
 from PIL import Image, ExifTags
 import io as image_io
 import time
-from helper import split_image, get_merged_boxes, non_max_suppression, get_normalized_bounding_box, visualize
+from helper import split_image, get_merged_boxes, non_max_suppression, get_normalized_bounding_box, visualize, inpaint_image
 import traceback 
 from pathlib import Path
 import os
@@ -166,8 +166,9 @@ async def predict(file: UploadFile = File(...)):
         merged_boxes = get_merged_boxes(results, image.size)
         boxes = non_max_suppression(merged_boxes, 0.25)
         # boxes = results[0].boxes
+        b64_inpainted_png = inpaint_image(image, boxes)
         
-        visualize(image, boxes, model.names)
+        # visualize(image, boxes, model.names)
         postprocess_time = time.time() - postprocess_start
             
         if not boxes:
@@ -307,7 +308,12 @@ async def predict(file: UploadFile = File(...)):
             "braille": processed_braille,
             "text": corrected_text,
             "confidence": avg_confidence, 
-            "boundingBox": normalized_bounding_box
+            "boundingBox": normalized_bounding_box,
+            "inpaintedImage": {
+                "mimeType": "image/png",
+                "encoding": "base64",
+                "data": b64_inpainted_png
+            }
         })
         
     except Exception as e: 

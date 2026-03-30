@@ -118,9 +118,9 @@ def find_matching_words(raw_word, word_set):
     corr_candidate_set = set()
     for raw_candidate in raw_candidates:
         corr_candidates = spell.candidates(raw_candidate)
-        corr_candidates = [candidate for candidate in corr_candidates if len(candidate) == word_len]
         if corr_candidates is None: 
             corr_candidates = [raw_candidate]
+        corr_candidates = [candidate for candidate in corr_candidates if len(candidate) == word_len]
         corr_candidate_set.update(corr_candidates)
     
 

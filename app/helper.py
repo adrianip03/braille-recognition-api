@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from PIL import ImageDraw
+import base64
 
 WINDOW_PERCENTAGE = 0.4
 WINDOW_NUM = 3
@@ -175,3 +176,22 @@ def visualize(image, boxes, names):
         )
 
     img_with_boxes.show()
+    
+def inpaint_image(img, boxes):
+    numpy_image_rgb = np.asarray(img)
+    cv2_image = cv2.cvtColor(numpy_image_rgb, cv2.COLOR_BGR2RGB)
+    mask = cv2.cvtColor(numpy_image_rgb, cv2.COLOR_BGR2GRAY)
+    mask[:,:] = 0
+    mask[:100, :100] = 1
+    for box in boxes:         
+        x1, y1, x2, y2 = box.xyxy[0].tolist()
+        cv2.rectangle(mask,(int(x1),int(y1)),(int(x2),int(y2)), 255,-1)    
+        
+    inpainted_image = cv2.inpaint(cv2_image,mask,5,cv2.INPAINT_TELEA)
+    
+    inpainted_bgr = cv2.cvtColor(inpainted_image, cv2.COLOR_RGB2BGR)
+    success, buf = cv2.imencode(".png", inpainted_bgr)
+    if not success:
+        raise RuntimeError("PNG encoding failed")
+    b64_inpainted_png = base64.b64encode(buf.tobytes()).decode("utf-8")
+    return b64_inpainted_png
