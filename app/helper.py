@@ -68,31 +68,65 @@ class Point:
         self.x = x
         self.y = y
 
-class Box: 
-    def __init__(self, cls, conf, xyxy, offset, names_dict):
-        self.cls = cls
-        self.conf = conf
-        self.class_name = names_dict[int(cls[0])]
-
-        x1, y1, x2, y2 = xyxy[0].tolist()
-        x_offset, y_offset = offset
+class TorchBox: 
+    def __init__(self, sorted_dist, xyxy):
+        x1, y1, x2, y2 = xyxy
+        self.xyxy = np.array([xyxy], dtype=np.float32)
+        self.sorted_dist = sorted_dist
+        self.class_name = list(sorted_dist.keys())[0]
+        self.conf = [list(sorted_dist.values())[0]]
+        self.mid_point = Point((x1+x2)/2, (y1+y2)/2)
         
+    def offset(self, x_offset, y_offset):
+        x1, y1, x2, y2 = self.xyxy[0].tolist()
         x1 += x_offset
         x2 += x_offset
         y1 += y_offset
         y2 += y_offset
-        
         self.xyxy = np.array([[x1, y1, x2, y2]], dtype=np.float32)
-        
         self.mid_point = Point((x1+x2)/2, (y1+y2)/2)
+        
+# class Box: 
+#     def __init__(self, cls, conf, xyxy, offset, names_dict):
+#         self.cls = cls
+#         self.conf = conf
+#         self.class_name = names_dict[int(cls[0])]
+
+#         x1, y1, x2, y2 = xyxy[0].tolist()
+#         x_offset, y_offset = offset
+        
+#         x1 += x_offset
+#         x2 += x_offset
+#         y1 += y_offset
+#         y2 += y_offset
+        
+#         self.xyxy = np.array([[x1, y1, x2, y2]], dtype=np.float32)
+        
+#         self.mid_point = Point((x1+x2)/2, (y1+y2)/2)
     
-def get_merged_boxes(results, original_size, names_dict):
+# def get_merged_boxes(results, original_size, names_dict):
+#     offset_list = get_boxes_offset(original_size)
+#     merged_boxes = []
+#     for idx, result in enumerate(results):
+#         offset = offset_list[idx]
+#         boxes = [Box(box.cls, box.conf, box.xyxy, offset, names_dict) for box in result.boxes]
+#         for box in boxes: 
+#             x1, y1, x2, y2 = box.xyxy[0].tolist()
+#             boxw = x2 - x1
+#             boxh = y2 - y1
+#             box_rat = float(boxw) / boxh
+#             if box_rat <= STD_BOX_RATIO * (1+BOX_RATIO_ERROR_BOUND) and box_rat >= STD_BOX_RATIO * (1-BOX_RATIO_ERROR_BOUND):
+#                 merged_boxes.append(box)
+#         # merged_boxes.extend(boxes)
+#     return merged_boxes
+
+def torch_get_merged_boxes(results, original_size, names_dict):
     offset_list = get_boxes_offset(original_size)
     merged_boxes = []
-    for idx, result in enumerate(results):
-        offset = offset_list[idx]
-        boxes = [Box(box.cls, box.conf, box.xyxy, offset, names_dict) for box in result.boxes]
+    for idx, boxes in enumerate(results):
+        x_offset, y_offset = offset_list[idx]
         for box in boxes: 
+            box.offset(x_offset, y_offset)
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             boxw = x2 - x1
             boxh = y2 - y1
@@ -156,7 +190,7 @@ def visualize(image, boxes, names):
     colors = dict()
     for box in boxes: 
         x1, y1, x2, y2 = box.xyxy[0].tolist()
-        class_name = names[int(box.cls[0])]
+        class_name = box.class_name
         if class_name not in colors:
             colors[class_name] = tuple(random.randint(50, 255) for _ in range(3))    
         color = colors[class_name]

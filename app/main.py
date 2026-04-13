@@ -9,11 +9,13 @@ from ultralytics import YOLO
 from PIL import Image, ExifTags
 import io as image_io
 import time
-from helper import split_image, get_merged_boxes, non_max_suppression, get_normalized_bounding_box, visualize, inpaint_image
+from helper import split_image, non_max_suppression, get_normalized_bounding_box, visualize, inpaint_image, torch_get_merged_boxes
 import traceback 
 from pathlib import Path
 import os
-from correction import find_matching_words, get_words
+from correction import find_matching_words
+from prob_char import torch_inference
+from prob_dict import WordExistenceEvaluator
 
 # Helper function to fix image orientation based on EXIF data
 def fix_image_orientation(image: Image.Image) -> Image.Image:
@@ -156,7 +158,8 @@ async def predict(file: UploadFile = File(...)):
         
         # Model infernce
         inference_start = time.time()
-        results = model(image_list, imgsz=1024, iou=0.25, conf=0.25, agnostic_nms = True)
+        # results = model(image_list, imgsz=1024, iou=0.25, conf=0.25, agnostic_nms = True)
+        results = torch_inference(model, image_list, input_size=1024)
         # results = model(image, imgsz=1024, iou=0.25, conf=0.25)
         inference_time = time.time() - inference_start
         
@@ -166,12 +169,13 @@ async def predict(file: UploadFile = File(...)):
         # Post processing 
         # merge box from split images and do nms for overlapping areas
         postprocess_start = time.time()
-        merged_boxes = get_merged_boxes(results, image.size, model.names)
+        # merged_boxes = get_merged_boxes(results, image.size, model.names)
+        merged_boxes = torch_get_merged_boxes(results, image.size, model.names)
         boxes = non_max_suppression(merged_boxes, 0.25)
         # boxes = results[0].boxes
         b64_inpainted_png = inpaint_image(image, boxes)
         
-        # visualize(image, boxes, model.names)
+        visualize(image, boxes, model.names)
         postprocess_time = time.time() - postprocess_start
             
         if not boxes:
@@ -259,7 +263,7 @@ async def predict(file: UploadFile = File(...)):
         capitalFlag = False
         numberFlag = False
         
-        word_list = list()
+        word_box_list = list()
         temp_word = list()
         for i, line in enumerate(sorted_lines): 
             for j, char in enumerate(line): 
@@ -267,11 +271,13 @@ async def predict(file: UploadFile = File(...)):
                     # newline? 
                     processed_braille += " "
                     processed_text += " "
-                    word_list.append(temp_word)
+                    word_box_list.append(temp_word)
+                    temp_word = list()
                 elif (horizontal_distance_from_front[i][j] > space_threshold):
                     processed_braille += " "
                     processed_text += " "
-                    word_list.append(temp_word)
+                    word_box_list.append(temp_word)
+                    temp_word = list()
                     
                 processed_braille += classNameToBraille[char.class_name]
                 temp_word.append(char)
@@ -291,10 +297,11 @@ async def predict(file: UploadFile = File(...)):
                         processed_text += char.class_name
                         
         print(processed_text)
-        word_set = get_words()
         words = processed_text.split()
-        corrected_words = [find_matching_words(word, word_set)[0] or word for word in words]
+        evaluator = WordExistenceEvaluator()
+        corrected_words = [find_matching_words(word, boxes, evaluator)[0] or word for word, boxes in zip(words, word_box_list)]
         corrected_text = " ".join(corrected_words)
+        corrected_text = processed_text
         print(corrected_text)
                         
         conversion_time = time.time() - conversion_start
