@@ -166,7 +166,7 @@ async def predict(file: UploadFile = File(...)):
         # Post processing 
         # merge box from split images and do nms for overlapping areas
         postprocess_start = time.time()
-        merged_boxes = get_merged_boxes(results, image.size)
+        merged_boxes = get_merged_boxes(results, image.size, model.names)
         boxes = non_max_suppression(merged_boxes, 0.25)
         # boxes = results[0].boxes
         b64_inpainted_png = inpaint_image(image, boxes)
@@ -190,31 +190,32 @@ async def predict(file: UploadFile = File(...)):
         confidences = [float(box.conf[0]) for box in boxes]
         avg_confidence = np.mean(confidences) if confidences else 0
         
-        cords = []
-        for box in boxes: 
-            cls_idx = int(box.cls[0])
-            class_name = model.names[cls_idx]
+        # cords = []
+        # for box in boxes: 
+        #     cls_idx = int(box.cls[0])
+        #     class_name = model.names[cls_idx]
             
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
+        #     x1, y1, x2, y2 = box.xyxy[0].tolist()
             
-            midpoint = ((x1+x2)/2, (y1+y2)/2)
-            cords.append((class_name, midpoint))
+        #     midpoint = ((x1+x2)/2, (y1+y2)/2)
+        #     cords.append((class_name, midpoint))
         
         # Start line detection timer
         line_detect_start = time.time()
         # group together similar y as same line
-        y_cords = [x[1][1] for x in cords]
+        y_cords = [box.mid_point.y for box in boxes]
         line_labels = detect_lines_dbscan(y_cords)
     
         line_groups = {}
         for i, label in enumerate(line_labels):
             if label not in line_groups:
                 line_groups[label] = []
-            line_groups[label].append(cords[i])
+            line_groups[label].append(boxes[i])
             
+        # sort lines by y then x
         sorted_lines = []
-        for label in sorted(line_groups.keys(),  key=lambda l: np.mean([c[1][1] for c in line_groups[l]])):
-            line_chars = sorted(line_groups[label], key=lambda x: x[1][0])
+        for label in sorted(line_groups.keys(),  key=lambda l: np.mean([box.mid_point.y for box in line_groups[l]])):
+            line_chars = sorted(line_groups[label], key=lambda box: box.mid_point.x)
             sorted_lines.append(line_chars)
             
         line_detect_time = time.time() - line_detect_start
@@ -225,7 +226,7 @@ async def predict(file: UploadFile = File(...)):
         for line in sorted_lines: 
             x_dist_within_line = [-1]
             for i in range(1, len(line)): 
-                x_dist_within_line.append(line[i][1][0] - line[i-1][1][0])
+                x_dist_within_line.append(line[i].mid_point.x - line[i-1].mid_point.x)
             horizontal_distance_from_front.append(x_dist_within_line)
         
         same_line_horizontal_dist = [dist for sublist in horizontal_distance_from_front for dist in sublist if dist > 0]
@@ -258,31 +259,36 @@ async def predict(file: UploadFile = File(...)):
         capitalFlag = False
         numberFlag = False
         
+        word_list = list()
+        temp_word = list()
         for i, line in enumerate(sorted_lines): 
             for j, char in enumerate(line): 
                 if (horizontal_distance_from_front[i][j] == -1 and i != 0):
                     # newline? 
                     processed_braille += " "
                     processed_text += " "
+                    word_list.append(temp_word)
                 elif (horizontal_distance_from_front[i][j] > space_threshold):
                     processed_braille += " "
                     processed_text += " "
+                    word_list.append(temp_word)
                     
-                processed_braille += classNameToBraille[char[0]]
-                if char[0] == "capital": 
+                processed_braille += classNameToBraille[char.class_name]
+                temp_word.append(char)
+                if char.class_name == "capital": 
                     capitalFlag = True
-                elif char[0] == "number": 
+                elif char.class_name == "number": 
                     numberFlag = True
                 else: 
                     if capitalFlag: 
-                        processed_text += char[0].upper()
+                        processed_text += char.class_name.upper()
                         capitalFlag = False
                     elif numberFlag: 
-                        if char[0] in numberDict: 
-                            processed_text += numberDict[char[0]]
+                        if char.class_name in numberDict: 
+                            processed_text += numberDict[char.class_name]
                         numberFlag = False
                     else: 
-                        processed_text += char[0]
+                        processed_text += char.class_name
                         
         print(processed_text)
         word_set = get_words()

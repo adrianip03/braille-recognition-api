@@ -63,10 +63,16 @@ def get_boxes_offset(original_size):
             
     return offset_list
 
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
 class Box: 
-    def __init__(self, cls, conf, xyxy, offset):
+    def __init__(self, cls, conf, xyxy, offset, names_dict):
         self.cls = cls
         self.conf = conf
+        self.class_name = names_dict[int(cls[0])]
 
         x1, y1, x2, y2 = xyxy[0].tolist()
         x_offset, y_offset = offset
@@ -77,13 +83,15 @@ class Box:
         y2 += y_offset
         
         self.xyxy = np.array([[x1, y1, x2, y2]], dtype=np.float32)
+        
+        self.mid_point = Point((x1+x2)/2, (y1+y2)/2)
     
-def get_merged_boxes(results, original_size):
+def get_merged_boxes(results, original_size, names_dict):
     offset_list = get_boxes_offset(original_size)
     merged_boxes = []
     for idx, result in enumerate(results):
         offset = offset_list[idx]
-        boxes = [Box(box.cls, box.conf, box.xyxy, offset) for box in result.boxes]
+        boxes = [Box(box.cls, box.conf, box.xyxy, offset, names_dict) for box in result.boxes]
         for box in boxes: 
             x1, y1, x2, y2 = box.xyxy[0].tolist()
             boxw = x2 - x1
