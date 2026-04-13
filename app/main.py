@@ -54,13 +54,16 @@ def detect_lines_dbscan(y_coords, eps_auto=True, safety_factor=5):
         
         neighbors = NearestNeighbors(n_neighbors=2)
         neighbors_fit = neighbors.fit(y_array)
-        distances, indices = neighbors_fit.kneighbors(y_array)
+        try:
+            distances, indices = neighbors_fit.kneighbors(y_array)
+            distances = np.sort(distances[:, 1])
+            
+            # we want epsilon to be max nearest within cluster neighbor distance
+            # set to be 95% * safety factor to prevent extreme cases with single point cluster
+            eps = np.percentile(distances, 95) * safety_factor
+        except:
+            eps = 10
         
-        distances = np.sort(distances[:, 1])
-        
-        # we want epsilon to be max nearest within cluster neighbor distance
-        # set to be 95% * safety factor to prevent extreme cases with single point cluster
-        eps = np.percentile(distances, 95) * safety_factor
     else:
         eps = 10  # approx char height
     
@@ -235,7 +238,10 @@ async def predict(file: UploadFile = File(...)):
             centers = sorted(kmeans.cluster_centers_.flatten())
             
             # silhouette check: 
-            score = silhouette_score(X, labels)
+            try: 
+                score = silhouette_score(X, labels)
+            except: 
+                score = 0
             
             if score > 0.5: 
                 space_threshold = np.mean(centers)
