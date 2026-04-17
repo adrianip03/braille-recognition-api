@@ -1,7 +1,8 @@
 import re
 import nltk
 from nltk.corpus import words
-from spellchecker import SpellChecker
+import wordfreq
+import sys
 
 ################################################################################
 #  load enlisg words
@@ -99,6 +100,30 @@ def case_restore(word, casing):
 
 
 ################################################################################
+#  find word distance
+################################################################################
+def calc_word_dist(word1, word2):
+    # input:
+    #    word1 - a string 
+    #    word2 - a string
+    # return:
+    #    word_dist - custom edit distance between the two words
+    
+    # if words are of different length, define them as inf. far apart
+    if len(word1) != len(word2):
+        return sys.maxsize
+    
+    word_dist = 0
+    for char1, char2 in zip(word1, word2):
+        if char1 != char2: 
+            if char1 in SYM_PAIRS and SYM_PAIRS[char1] == char2:
+                word_dist += 0.5
+            else:
+                word_dist += 1
+    return word_dist
+
+
+################################################################################
 #  find all words that match the given pattern
 ################################################################################
 def find_matching_words(raw_word, word_set):
@@ -108,39 +133,43 @@ def find_matching_words(raw_word, word_set):
     # return:
     #    matches - a list of matching words
     
-    spell = SpellChecker()    
     regex_str = word_to_regex(raw_word)
-    raw_candidates = generate_candidates(raw_word)
-    # print(raw_candidates)
     casing = get_casing(raw_word)
-    matches = []
+    edit_matches = []
     regex_matches = []
     
-    word_len = len(raw_word)
-    corr_candidate_list = list()
-    for raw_candidate in raw_candidates:
-        corr_candidates = spell.candidates(raw_candidate)
-        if corr_candidates is None: 
-            corr_candidates = [raw_candidate]
-        for candidate in corr_candidates:
-            if len(candidate) == word_len and candidate not in corr_candidate_list:
-                corr_candidate_list.append(candidate)
-    
-
+    min_dist = 2
     for word in word_set:
+        # regex matching
         if re.match(regex_str, word, re.IGNORECASE):
-            regex_matches.append(word)
-        if word in corr_candidate_list:
-            matches.append(word)
+            freq = wordfreq.zipf_frequency(word, "en")
+            regex_matches.append((freq, word))
         
-    if len(matches) == 0:
+        # edit distance matching
+        dist = calc_word_dist(raw_word.lower(), word)
+        if dist < min_dist:
+            freq = wordfreq.zipf_frequency(word, "en")
+            edit_matches = [(freq, word),]
+            min_dist = dist
+        elif dist == min_dist:
+            freq = wordfreq.zipf_frequency(word, "en")
+            edit_matches.append((freq, word))
+    
+    # sort matches by frequency
+    regex_matches.sort(reverse=True)
+    edit_matches.sort(reverse=True)
+    
+    # if no matches in either case, return original word
+    if len(edit_matches) == 0 and len(regex_matches) == 0:
         return [raw_word]
     
+    # prioritize returning regex matches, then edit distance matches
     if len(regex_matches) != 0: 
-        case_preserved_matches = [case_restore(word, casing) for word in regex_matches]
+        case_preserved_matches = [case_restore(word, casing) for _, word in regex_matches]
     else: 
-        case_preserved_matches = [case_restore(word, casing) for word in matches]
+        case_preserved_matches = [case_restore(word, casing) for _, word in edit_matches]
     return case_preserved_matches
+
 
 if __name__ == "__main__":
     words = get_words()
@@ -154,6 +183,6 @@ if __name__ == "__main__":
     # print(f"Pattern '{pattern2}' → Most likely: {result2[0] if result2 else 'No match'}")
     
     print("\nAll matches for each pattern:")
-    for pattern in "Hillo Rorld This is a ner leni".split():
+    for pattern in "Hella Rorld This is a ner lixi".split():
         matches = find_matching_words(pattern, words)
         print(f"{pattern}: {matches}")
