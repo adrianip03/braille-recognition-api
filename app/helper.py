@@ -7,7 +7,7 @@ WINDOW_PERCENTAGE = 0.4
 WINDOW_NUM = 3
 
 STD_BOX_RATIO = 47 / 79
-BOX_RATIO_ERROR_BOUND = 0.2
+BOX_RATIO_ERROR_BOUND = 0.3
 
 def split_image(image):
     numpy_image_rgb = np.asarray(image)
@@ -37,6 +37,7 @@ def split_image(image):
             window_image = cv2_image[y_start:y_end, x_start:x_end]
             image_list.append(window_image)
             
+    image_list.append(cv2_image)            
     return image_list
 
 
@@ -60,7 +61,9 @@ def get_boxes_offset(original_size):
             
             offset = (x_start, y_start)
             offset_list.append(offset)
-            
+    
+    
+    offset_list.append((0,0))
     return offset_list
 
 class Box: 

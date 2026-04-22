@@ -156,7 +156,7 @@ async def predict(file: UploadFile = File(...)):
         
         # Model infernce
         inference_start = time.time()
-        results = model(image_list, imgsz=1024, iou=0.25, conf=0.25, agnostic_nms = True)
+        results = model(image_list, imgsz=1024, iou=0.25, conf=0.2, agnostic_nms = True)
         # results = model(image, imgsz=1024, iou=0.25, conf=0.25)
         inference_time = time.time() - inference_start
         
@@ -262,8 +262,8 @@ async def predict(file: UploadFile = File(...)):
             for j, char in enumerate(line): 
                 if (horizontal_distance_from_front[i][j] == -1 and i != 0):
                     # newline? 
-                    processed_braille += " "
-                    processed_text += " "
+                    processed_braille += "\n"
+                    processed_text += "\n"
                 elif (horizontal_distance_from_front[i][j] > space_threshold):
                     processed_braille += " "
                     processed_text += " "
@@ -272,7 +272,12 @@ async def predict(file: UploadFile = File(...)):
                 if char[0] == "capital": 
                     capitalFlag = True
                 elif char[0] == "number": 
-                    numberFlag = True
+                    # numberFlag = True
+                    if capitalFlag: 
+                        processed_text += 'V'
+                        capitalFlag = False
+                    else: 
+                        processed_text += 'v'
                 else: 
                     if capitalFlag: 
                         processed_text += char[0].upper()
@@ -286,9 +291,9 @@ async def predict(file: UploadFile = File(...)):
                         
         print(processed_text)
         word_set = get_words()
-        words = processed_text.split()
-        corrected_words = [find_matching_words(word, word_set)[0] or word for word in words]
-        corrected_text = " ".join(corrected_words)
+        lines_of_words = [ line.split() for line in  processed_text.split('\n')]
+        lines_of_corrected_words = [[find_matching_words(word, word_set)[0] or word for word in words] for words in lines_of_words]
+        corrected_text = "\n".join([" ".join(words) for words in lines_of_corrected_words])
         print(corrected_text)
                         
         conversion_time = time.time() - conversion_start

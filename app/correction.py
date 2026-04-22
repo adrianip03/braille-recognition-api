@@ -17,6 +17,8 @@ def get_words():
 
 SYM_PAIRS = {'i': 'e',
              'e': 'i', 
+             'd': 'f',
+             'f': 'd', 
              'w': 'r',
              'r': 'w',
              'h': 'j',
@@ -132,6 +134,9 @@ def find_matching_words(raw_word, word_set):
     #    word_set - a set of all english words
     # return:
     #    matches - a list of matching words
+    
+    if raw_word.isnumeric(): 
+        return [raw_word]
     
     regex_str = word_to_regex(raw_word)
     casing = get_casing(raw_word)
