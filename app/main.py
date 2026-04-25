@@ -1,3 +1,7 @@
+"""
+Braille Recognition API - FastAPI server for Braille character detection and translation.
+"""
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
@@ -9,15 +13,50 @@ from ultralytics import YOLO
 from PIL import Image, ExifTags
 import io as image_io
 import time
-from helper import split_image, get_merged_boxes, non_max_suppression, get_normalized_bounding_box, visualize, inpaint_image
+from helper import (
+    split_image, get_merged_boxes, non_max_suppression, 
+    get_normalized_bounding_box, visualize, inpaint_image
+)
 import traceback 
 from pathlib import Path
 import os
 from correction import find_matching_words, get_words
 
-# Helper function to fix image orientation based on EXIF data
+# Braille to English character mapping
+# Format: 'character': 'braille_pattern'
+classNameToBraille = {
+    'a': '⠁', 'b': '⠃', 'c': '⠉', 'd': '⠙', 'e': '⠑',
+    'f': '⠋', 'g': '⠛', 'h': '⠓', 'i': '⠊', 'j': '⠚',
+    'k': '⠅', 'l': '⠇', 'm': '⠍', 'n': '⠝', 'o': '⠕',
+    'p': '⠏', 'q': '⠟', 'r': '⠗', 's': '⠎', 't': '⠞',
+    'u': '⠥', 'v': '⠧', 'w': '⠺', 'x': '⠭', 'y': '⠽', 'z': '⠵',
+    'capital': '⠠',
+    'number': '⠼'
+}
+
+# Braille numbers mapping (after number indicator)
+numberDict = {
+    'j': '0', 'a': '1', 'b': '2', 'c': '3', 'd': '4',
+    'e': '5', 'f': '6', 'g': '7', 'h': '8', 'i': '9',
+}
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Braille Recognition API",
+    description="API for detecting Braille characters in images and converting them to text",
+    version="1.0.0"
+)
+
 def fix_image_orientation(image: Image.Image) -> Image.Image:
-    """Apply EXIF orientation to image if present."""
+    """
+    Apply EXIF orientation correction to image.
+    
+    Args:
+        image: PIL Image
+        
+    Returns:
+        image: Orientation-corrected PIL Image
+    """
     try:
         exif = image._getexif()
         if exif is not None:
@@ -39,14 +78,22 @@ def fix_image_orientation(image: Image.Image) -> Image.Image:
     
     return image
 
-def preprocess_image(image: Image.Image) -> Image.Image:    
-    
-    image = fix_image_orientation(image)
-    
-    return image
+def preprocess_image(image: Image.Image) -> Image.Image:
+    """Apply preprocessing to input image."""
+    return fix_image_orientation(image)
 
-# db clustering to detect lines
 def detect_lines_dbscan(y_coords, eps_auto=True, safety_factor=5):
+    """
+    Group detected characters into text lines using DBSCAN clustering.
+    
+    Args:
+        y_coords: List of Y-coordinates for each character
+        eps_auto: Auto-determine epsilon parameter
+        safety_factor: Safety factor for automatic epsilon
+        
+    Returns:
+        labels: Cluster labels for each coordinate
+    """
     y_array = np.array(y_coords).reshape(-1, 1)
     
     if eps_auto:
@@ -57,123 +104,88 @@ def detect_lines_dbscan(y_coords, eps_auto=True, safety_factor=5):
         try:
             distances, indices = neighbors_fit.kneighbors(y_array)
             distances = np.sort(distances[:, 1])
-            
-            # we want epsilon to be max nearest within cluster neighbor distance
-            # set to be 95% * safety factor to prevent extreme cases with single point cluster
+            # Set epsilon to 95th percentile of nearest-neighbor distances
             eps = np.percentile(distances, 95) * safety_factor
         except:
             eps = 10
-        
     else:
-        eps = 10  # approx char height
+        eps = 10  # Approximate character height
     
     dbscan = DBSCAN(eps=eps, min_samples=1)
     labels = dbscan.fit_predict(y_array)
     
     return labels
 
-classNameToBraille = {
-    'a': '⠁', 'b': '⠃', 'c': '⠉', 'd': '⠙', 'e': '⠑',
-    'f': '⠋', 'g': '⠛', 'h': '⠓', 'i': '⠊', 'j': '⠚',
-    'k': '⠅', 'l': '⠇', 'm': '⠍', 'n': '⠝', 'o': '⠕',
-    'p': '⠏', 'q': '⠟', 'r': '⠗', 's': '⠎', 't': '⠞',
-    'u': '⠥', 'v': '⠧', 'w': '⠺', 'x': '⠭', 'y': '⠽', 'z': '⠵',
-    'capital': '⠠',
-    'number': '⠼',
-    'dot_4': '',
-    
-    # # Punctuation
-    # '.': '⠲',    # period
-    # ',': '⠂',    # comma
-    # '?': '⠦',    # question mark
-    # '!': '⠖',    # exclamation mark
-    # ';': '⠆',    # semicolon
-    # ':': '⠒',    # colon
-    # "'": '⠄',    # apostrophe
-    # '"': '⠐⠂',  # quotation mark
-    # '-': '⠤',    # hyphen
-    # '(': '⠶',    # opening parenthesis
-    # ')': '⠶',    # closing parenthesis (same as opening in Braille)
-    # '/': '⠌',    # slash
-    # '[': '⠦',    # opening bracket (same as ? in some systems)
-    # ']': '⠴',    # closing bracket
-    # '{': '⠠⠦',  # opening brace
-    # '}': '⠠⠴',  # closing brace
-    # '<': '⠪',    # less than
-    # '>': '⠕',    # greater than (same as o in some systems)
-}
-
-numberDict = {
-    'j': '0', 'a': '1', 'b': '2', 'c': '3', 'd': '4',
-    'e': '5', 'f': '6', 'g': '7', 'h': '8', 'i': '9',
-}
-
-app = FastAPI(title="Braille Recognition API")
-
 @app.get("/")
 async def root():
+    """Health check endpoint."""
     return {"message": "Braille Recognition API", "status": "running"}
 
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
-    # Start overall timer
+    """
+    Detect and translate Braille characters from an image.
+    
+    Args:
+        file: Image file (JPEG, PNG, etc.)
+        
+    Returns:
+        JSONResponse containing:
+            - braille: Braille pattern representation
+            - text: Translated English text
+            - confidence: Average detection confidence
+            - boundingBox: Normalized bounding box coordinates
+            - inpaintedImage: Base64 encoded PNG with characters removed
+    """
     start_time = time.time()
     
+    # Validate input
     if not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
     
-    # Model load
+    # Load YOLO model
     model_load_start = time.time()
-    model = None
     parent_dir = Path(__file__).parent.parent
     model_path = None
-    if((parent_dir / "model").exists()):
+    
+    if (parent_dir / "model").exists():
         model_path = parent_dir / "model" / "currentModel.pt"
     else:
         model_path = Path('/app/model/currentModel.pt')
+    
     try:
         model = YOLO(model_path)
     except Exception as e:
         print(f"Error loading model: {e} in directory {os.getcwd()}")
-        model = None
-    
-    if model is None: 
         raise HTTPException(status_code=500, detail="Model not loaded")
+    
     model_load_time = time.time() - model_load_start
     
     try: 
-        # File read
+        # Read and preprocess image
         file_read_start = time.time()
         contents = await file.read()
         file_read_time = time.time() - file_read_start
         
-        # Image preprocess
         image_process_start = time.time()
         image = Image.open(image_io.BytesIO(contents))
         image = preprocess_image(image)
         image_list = split_image(image)
         image_process_time = time.time() - image_process_start
         
-        # Model infernce
+        # Run inference
         inference_start = time.time()
-        results = model(image_list, imgsz=1024, iou=0.25, conf=0.2, agnostic_nms = True)
-        # results = model(image, imgsz=1024, iou=0.25, conf=0.25)
+        results = model(image_list, imgsz=1024, iou=0.25, conf=0.2, agnostic_nms=True)
         inference_time = time.time() - inference_start
         
-        # for result in results: 
-        #     result.show()
-        
-        # Post processing 
-        # merge box from split images and do nms for overlapping areas
+        # Post-process detections
         postprocess_start = time.time()
         merged_boxes = get_merged_boxes(results, image.size)
         boxes = non_max_suppression(merged_boxes, 0.25)
-        # boxes = results[0].boxes
         b64_inpainted_png = inpaint_image(image, boxes)
-        
-        # visualize(image, boxes, model.names)
         postprocess_time = time.time() - postprocess_start
-            
+        
+        # Return early if no detections
         if not boxes:
             return JSONResponse({
                 "braille": "",
@@ -182,44 +194,41 @@ async def predict(file: UploadFile = File(...)):
                 "message": "No braille characters detected",
                 "processing_time_ms": round((time.time() - start_time) * 1000, 2)
             })
-            
-        # get outer bounding box
+        
+        # Calculate metrics
         normalized_bounding_box = get_normalized_bounding_box(boxes, image.size)
-            
-        # get average confidence
         confidences = [float(box.conf[0]) for box in boxes]
         avg_confidence = np.mean(confidences) if confidences else 0
         
+        # Extract character positions
         cords = []
         for box in boxes: 
             cls_idx = int(box.cls[0])
             class_name = model.names[cls_idx]
-            
             x1, y1, x2, y2 = box.xyxy[0].tolist()
-            
-            midpoint = ((x1+x2)/2, (y1+y2)/2)
+            midpoint = ((x1 + x2) / 2, (y1 + y2) / 2)
             cords.append((class_name, midpoint))
         
-        # Start line detection timer
+        # Group into text lines
         line_detect_start = time.time()
-        # group together similar y as same line
         y_cords = [x[1][1] for x in cords]
         line_labels = detect_lines_dbscan(y_cords)
-    
+        
         line_groups = {}
         for i, label in enumerate(line_labels):
             if label not in line_groups:
                 line_groups[label] = []
             line_groups[label].append(cords[i])
-            
+        
+        # Sort lines by vertical position and characters by horizontal position
         sorted_lines = []
-        for label in sorted(line_groups.keys(),  key=lambda l: np.mean([c[1][1] for c in line_groups[l]])):
+        for label in sorted(line_groups.keys(), key=lambda l: np.mean([c[1][1] for c in line_groups[l]])):
             line_chars = sorted(line_groups[label], key=lambda x: x[1][0])
             sorted_lines.append(line_chars)
-            
+        
         line_detect_time = time.time() - line_detect_start
         
-        # Start spacing analysis timer
+        # Analyze spacing for word boundaries
         spacing_start = time.time()
         horizontal_distance_from_front = []
         for line in sorted_lines: 
@@ -230,14 +239,13 @@ async def predict(file: UploadFile = File(...)):
         
         same_line_horizontal_dist = [dist for sublist in horizontal_distance_from_front for dist in sublist if dist > 0]
         
-        # try clustering into two clusters
+        # Cluster to find spacing threshold
         if len(same_line_horizontal_dist) >= 2: 
             X = np.array(same_line_horizontal_dist).reshape(-1, 1)
             kmeans = KMeans(n_clusters=2, random_state=0, n_init=10).fit(X)
             labels = kmeans.fit_predict(X)
             centers = sorted(kmeans.cluster_centers_.flatten())
             
-            # silhouette check: 
             try: 
                 score = silhouette_score(X, labels)
             except: 
@@ -251,7 +259,7 @@ async def predict(file: UploadFile = File(...)):
             space_threshold = sys.maxsize
         spacing_time = time.time() - spacing_start
         
-        # Start braille conversion timer
+        # Convert Braille to text
         conversion_start = time.time()
         processed_braille = ""
         processed_text = ""
@@ -260,15 +268,18 @@ async def predict(file: UploadFile = File(...)):
         
         for i, line in enumerate(sorted_lines): 
             for j, char in enumerate(line): 
-                if (horizontal_distance_from_front[i][j] == -1 and i != 0):
-                    # newline? 
+                # Handle line breaks and spaces
+                if horizontal_distance_from_front[i][j] == -1 and i != 0:
                     processed_braille += "\n"
                     processed_text += "\n"
-                elif (horizontal_distance_from_front[i][j] > space_threshold):
+                elif horizontal_distance_from_front[i][j] > space_threshold:
                     processed_braille += " "
                     processed_text += " "
-                    
+                
+                # Add Braille pattern
                 processed_braille += classNameToBraille[char[0]]
+                
+                # Convert to English characters
                 if char[0] == "capital": 
                     capitalFlag = True
                 elif char[0] == "number": 
@@ -288,18 +299,20 @@ async def predict(file: UploadFile = File(...)):
                         numberFlag = False
                     else: 
                         processed_text += char[0]
-                        
-        print(processed_text)
+        
+        # Apply spell correction
         word_set = get_words()
-        lines_of_words = [ line.split() for line in  processed_text.split('\n')]
-        lines_of_corrected_words = [[find_matching_words(word, word_set)[0] or word for word in words] for words in lines_of_words]
+        lines_of_words = [line.split() for line in processed_text.split('\n')]
+        lines_of_corrected_words = [
+            [find_matching_words(word, word_set)[0] or word for word in words] 
+            for words in lines_of_words
+        ]
         corrected_text = "\n".join([" ".join(words) for words in lines_of_corrected_words])
-        print(corrected_text)
-                        
+        
         conversion_time = time.time() - conversion_start
         
+        # Calculate timing metrics
         total_time = time.time() - start_time
-        
         timing_details = {
             "total_ms": round(total_time * 1000, 2),
             "model_load_ms": round(model_load_time * 1000, 2),
@@ -310,7 +323,6 @@ async def predict(file: UploadFile = File(...)):
             "line_detection_ms": round(line_detect_time * 1000, 2),
             "spacing_analysis_ms": round(spacing_time * 1000, 2),
             "braille_conversion_ms": round(conversion_time * 1000, 2),
-            "other_processing_ms": round((total_time - (model_load_time + file_read_time + image_process_time + inference_time + postprocess_time + line_detect_time + spacing_time + conversion_time)) * 1000, 2)
         }
         
         print(timing_details)
@@ -329,26 +341,27 @@ async def predict(file: UploadFile = File(...)):
         
     except Exception as e: 
         error_trace = traceback.format_exc()
-        print(e)
+        print(f"Error: {e}")
         print(str(error_trace))
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 @app.get("/classes/")
 async def get_classes():
-    model = None
+    """Get list of detectable Braille character classes."""
     current_dir = Path(__file__).parent
     model_path = None
-    if((current_dir / "model").exists()):
+    
+    if (current_dir / "model").exists():
         model_path = current_dir / "model" / "currentModel.pt"
-        # model_path = current_dir / "model" / "no_aug.pt"
     else:
         model_path = Path('/app/model/currentModel.pt')
+    
     try:
         model = YOLO(model_path)
         return {"classes": model.names}
     except Exception as e:
         print(f"Error loading model: {e} in directory {os.getcwd()}")
-        model = None
+        raise HTTPException(status_code=500, detail="Failed to load model classes")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
